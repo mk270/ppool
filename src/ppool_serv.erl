@@ -54,6 +54,7 @@ run_worker(S = #state{limit=N, sup=Sup, refs=R}, Args, Sync) ->
     lager:info("ppool_serv: starting worker: ~p", [Args]),
     lager:info("sup: ~p", [Sup]),
 	{ok, Pid} = supervisor:start_child(Sup, Args),
+    lager:info("pid: ~p", [Pid]),
 	Ref = erlang:monitor(process, Pid),
 	NewLimit = N - 1,
 	NewState = S#state{limit=NewLimit, refs=gb_sets:add(Ref,R)},
