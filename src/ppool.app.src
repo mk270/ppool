@@ -1,11 +1,14 @@
 {application, ppool,
- [{vsn, "1.1.0"},
+ [{vsn, "1.1.1"},
   {modules, [ppool, ppool_serv, ppool_sup, ppool_supersup, ppool_worker_sup]},
   {registered, [ppool]},
   {applications, [
     kernel,
     stdlib
   ]},
-  {description, "ppool from LYSE"},
+  {description, "Worker pool library from LearnYouSomeErlang"},
+  {licenses, ["MIT"]},
+  {links, [{"GitHub", "https://github.com/mk270/ppool"}]},
+  {exclude_files, ["*.lock"]},
   {mod, {ppool, []}}
 ]}.
