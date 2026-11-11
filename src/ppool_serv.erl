@@ -42,12 +42,14 @@ start_link(Name, Limit, Sup, MFA) when is_atom(Name), is_integer(Limit) ->
     gen_server:start_link({local, Name}, ?MODULE, {Limit, MFA, Sup, Name}, []).
 
 %% @doc See `ppool:run/2'.
--spec run(atom(), list()) -> {ok, pid() | undefined} | noalloc.
+-spec run(atom(), list()) ->
+          {ok, pid() | undefined} | noalloc | {error, term()}.
 run(Name, Args) ->
     gen_server:call(Name, {run, Args}).
 
 %% @doc See `ppool:sync_queue/2'.
--spec sync_queue(atom(), list()) -> {ok, pid() | undefined}.
+-spec sync_queue(atom(), list()) ->
+          {ok, pid() | undefined} | {error, term()}.
 sync_queue(Name, Args) ->
     gen_server:call(Name, {sync, Args}, infinity).
 
@@ -79,8 +81,36 @@ init({Limit, MFA, Sup, Name}) ->
     self() ! {start_worker_supervisor, Sup, MFA},
     {ok, #state{limit=Limit, refs=gb_sets:empty(), name=Name}}.
 
-run_worker(S = #state{limit=N, sup=Sup, refs=R}, Args, Sync) ->
-	{ok, Pid} = supervisor:start_child(Sup, Args),
+%% A worker that fails to start must not take the pool down: the caller
+%% (if any) gets {error, Reason}, and no slot is used.
+run_worker(S = #state{sup=Sup}, Args, Sync) ->
+	case start_worker(Sup, Args) of
+		{ok, Pid} ->
+			monitor_worker(S, Pid, Sync);
+		{error, Reason} ->
+			start_failed(S, Reason),
+			case Sync of
+				true ->
+					{reply, {error, Reason}, S};
+				false ->
+					{noreply, S}
+			end
+	end.
+
+%% supervisor:start_child/2 returns {ok, Pid}, {ok, Pid, Info} or
+%% {error, Reason}; a started worker is tracked whatever Info says.
+start_worker(Sup, Args) ->
+	case supervisor:start_child(Sup, Args) of
+		{ok, Pid} -> {ok, Pid};
+		{ok, Pid, _Info} -> {ok, Pid};
+		{error, _} = Error -> Error
+	end.
+
+start_failed(#state{name=Name}, Reason) ->
+	error_logger:warning_msg("ppool ~p: could not start a worker: ~p~n",
+	                         [Name, Reason]).
+
+monitor_worker(S = #state{limit=N, refs=R}, Pid, Sync) ->
 	Ref = erlang:monitor(process, Pid),
 	NewLimit = N - 1,
 	NewState = S#state{limit=NewLimit, refs=gb_sets:add(Ref,R)},
@@ -141,14 +171,28 @@ handle_down_worker(Ref, S = #state{limit=L, sup=Sup, refs=Refs}) ->
     case queue:out(S#state.queue) of
 		{{value, V}, Q} ->
 			Args = case V of {_From, A} -> A; A -> A end,
-			{ok, Pid} = supervisor:start_child(Sup, Args),
+			case start_worker(Sup, Args) of
+				{ok, Pid} ->
+					replace_worker(Ref, V, Q, Pid, S);
+				{error, Reason} ->
+					%% drop this item, answer its caller (a sync
+					%% request is waiting for a reply), and try the next
+					start_failed(S, Reason),
+					case V of
+						{From, _} -> gen_server:reply(From, {error, Reason});
+						_ -> ok
+					end,
+					handle_down_worker(Ref, S#state{queue=Q})
+			end;
+        {empty, _} ->
+            {noreply, S#state{limit=L+1, refs=gb_sets:delete(Ref,Refs)}}
+    end.
+
+replace_worker(Ref, V, Q, Pid, S = #state{refs=Refs}) ->
             NewRef = erlang:monitor(process, Pid),
             NewRefs = gb_sets:insert(NewRef, gb_sets:delete(Ref,Refs)),
 			case V of
 				{From, _A} -> gen_server:reply(From, {ok, Pid});
 				_A -> ok
 			end,
-            {noreply, S#state{refs=NewRefs, queue=Q}};
-        {empty, _} ->
-            {noreply, S#state{limit=L+1, refs=gb_sets:delete(Ref,Refs)}}
-    end.
+            {noreply, S#state{refs=NewRefs, queue=Q}}.

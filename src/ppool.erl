@@ -73,18 +73,21 @@ stop_pool(Name) ->
 %% Returns `{ok, Pid}' with the worker's pid, or `noalloc' if the pool
 %% is full; nothing is queued in that case.  Exits with `noproc' if
 %% there is no pool called `Name'.  If the worker cannot be started
-%% (for example the start function returns `{error, _}' or does not
-%% exist) the pool server crashes and the call exits.
+%% (the start function returns `{error, Reason}', raises, or does not
+%% exist for these arguments) returns `{error, Reason}'; the pool, its
+%% running workers and its queue are not affected, and no slot is used.
 %% (`undefined' as a pid is possible if the start function returns
 %% `ignore'.)
--spec run(name(), list()) -> {ok, pid() | undefined} | noalloc.
+-spec run(name(), list()) ->
+          {ok, pid() | undefined} | noalloc | {error, term()}.
 run(Name, Args) ->
     ppool_serv:run(Name, Args).
 
 %% @doc Asks the pool to run a worker as soon as a slot is free,
 %% without waiting.  Always returns `ok' immediately, even if no pool
 %% called `Name' exists (the request is then silently lost).  The
-%% worker's pid is not reported.
+%% worker's pid is not reported.  If the worker cannot be started the
+%% request is dropped and a warning is logged.
 -spec async_queue(name(), list()) -> ok.
 async_queue(Name, Args) ->
     ppool_serv:async_queue(Name, Args).
@@ -93,8 +96,11 @@ async_queue(Name, Args) ->
 %% timeout) in the pool's queue until a slot is free.  Returns
 %% `{ok, Pid}' once the worker has been started.  Exits with `noproc'
 %% if there is no pool called `Name', or with the reason the pool
-%% server dies if it goes away while the caller waits.
--spec sync_queue(name(), list()) -> {ok, pid() | undefined}.
+%% server dies if it goes away while the caller waits.  If the worker
+%% cannot be started returns `{error, Reason}', as {@link run/2} does,
+%% and the next request in the queue is tried.
+-spec sync_queue(name(), list()) ->
+          {ok, pid() | undefined} | {error, term()}.
 sync_queue(Name, Args) ->
     ppool_serv:sync_queue(Name, Args).
 

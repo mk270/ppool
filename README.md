@@ -138,7 +138,8 @@ run(Name, Args)
 
 Starts a worker immediately if the pool has a free slot. Returns
 `{ok, Pid}` with the worker's pid, or the atom `noalloc` if the pool is
-full. Nothing is queued on `noalloc`.
+full. Nothing is queued on `noalloc`. If the worker cannot be started
+it returns `{error, Reason}` (see below).
 
     1> ppool:run(nagger, [hi, 100, 2, self()]).
     {ok,<0.90.0>}
@@ -154,11 +155,20 @@ full. Nothing is queued on `noalloc`.
 
 Error cases: if no pool has that name the caller exits with
 `{noproc, {gen_server, call, [Name, {run, Args}]}}`. If the worker's
-start function fails (returns `{error, _}`, raises, or does not exist,
-for example because `Args` has the wrong length) the pool server
-crashes with a `badmatch`, the caller exits, and the pool is restarted
-empty (see Supervision). The call has the default 5 second gen_server
-timeout.
+start function fails (returns `{error, Reason}`, raises, or does not
+exist, for example because `Args` has the wrong length) the call
+returns `{error, Reason}`, a warning is logged, and no slot is used.
+The pool, its running workers and its queue are not affected.
+
+    1> ppool:run(nagger, [too, many, arguments, here, now]).
+    {error,{'EXIT',{undef,[{ppool_nagger,start_link,
+                               [too,many,arguments,here,now],
+                               []},
+                           {supervisor,do_start_child_i,3,
+                                       [{file,"supervisor.erl"},...]},
+                           ...]}}}
+
+The call has the default 5 second gen_server timeout.
 
 async_queue(Name, Args)
 -----------------------
@@ -171,15 +181,18 @@ never tells you the worker's pid.
     ok
 
 This is a cast: it returns `ok` even if the pool does not exist, in
-which case the request is silently lost. A start failure inside the
-pool crashes the pool server as for `run/2`.
+which case the request is silently lost. If the worker cannot be
+started, nobody is told: the request is dropped and a warning is
+logged by the pool server. A free slot is not used up by this.
 
 sync_queue(Name, Args)
 ----------------------
 
 Like `run/2`, but when the pool is full the caller blocks, with no
 timeout, until its request reaches the front of the queue and a worker
-has been started for it. Returns `{ok, Pid}`.
+has been started for it. Returns `{ok, Pid}`, or `{error, Reason}` if
+the worker could not be started, as for `run/2`; the pool then goes on
+to the next queued request.
 
     1> ppool:sync_queue(nagger, [q2, 10, 1, self()]).
     {ok,<0.101.0>}      %% after a slot became free
@@ -225,8 +238,13 @@ frees its slot.
 
 What other return values do:
 
-* `{error, _}` or an exception: the pool server crashes (badmatch).
-* `{ok, Pid, Info}` (three-tuple): the pool server crashes (badmatch).
+* `{error, Reason}` or an exception: the worker is not started. `run/2`
+  and `sync_queue/2` return `{error, Reason}` (for an exception,
+  `Reason` is `{'EXIT', Why}`); `async_queue/2` drops the request. In
+  every case a warning is logged, the pool server carries on, and no
+  slot is used.
+* `{ok, Pid, Info}` (three-tuple): treated as `{ok, Pid}`; `Info` is
+  ignored.
 * `ignore`: `run/2` returns `{ok, undefined}`, and the slot is freed
   again immediately (monitoring `undefined` reports `noproc`).
 
@@ -257,9 +275,14 @@ slot. Tested by killing a running worker with `exit(Pid, kill)`: a
 queued request started in its place and the pool's slot count stayed
 correct.
 
-If the pool server crashes (or is killed, or hits the failure cases
-above) its pool supervisor (`one_for_all`, at most 1 restart in 3
-seconds) restarts everything in that pool. Consequences, verified:
+A worker that fails to start does not count as a failure of anything:
+it does not disturb the running workers, the queue, the pool server or
+the worker supervisor (tested with many consecutive failures of every
+kind, well beyond the supervisor's restart intensity).
+
+If the pool server crashes (or is killed) its pool supervisor
+(`one_for_all`, at most 1 restart in 3 seconds) restarts everything in
+that pool. Consequences, verified:
 
 * all running workers of that pool are killed (their supervisor is
   restarted too);
@@ -311,12 +334,16 @@ Limits and caveats
 * There is no way to wait for a worker to finish, other than monitoring
   it yourself using the pid from `run/2` or `sync_queue/2`.
   `async_queue/2` gives you no pid at all.
-* A faulty worker start function crashes the pool server and discards
-  the pool's queue and running workers (see Supervision).
 * `async_queue/2` to a missing pool silently succeeds.
 * The pool server logs unexpected plain messages with `io:format`.
 * `ppool_nagger` is test code; it is not part of the released package.
-* This is didactic code: it is kept in its original form on purpose.
+* This is didactic code, and the original is kept as it was, with one
+  deliberate behaviour change: a worker that fails to start is
+  reported to the caller (or logged and dropped, for `async_queue/2`
+  and for queued requests) instead of crashing the pool server and
+  with it every running worker and the queue. The success path is
+  untouched; everything else is comments, specs, documentation and
+  tests.
 
 Development
 ===========
