@@ -54,9 +54,21 @@ sync_queue(Name, Args) ->
     gen_server:call(Name, {sync, Args}, infinity).
 
 %% @doc See `ppool:async_queue/2'.
+%% A cast to a name nobody has registered is silently dropped, so a
+%% mistyped pool name would look like success.  Rather than turn the
+%% cast into a call (which would make the caller wait for the pool),
+%% check that the name resolves first, and fail the way the calls
+%% in this module do when there is no pool: exit with `noproc'.  The
+%% check and the cast are not atomic; a pool that dies in between
+%% still loses the request, as it would anyway.
 -spec async_queue(atom(), list()) -> ok.
 async_queue(Name, Args) ->
-    gen_server:cast(Name, {async, Args}).
+    case whereis(Name) of
+        undefined ->
+            exit({noproc, {gen_server, cast, [Name, {async, Args}]}});
+        _Pid ->
+            gen_server:cast(Name, {async, Args})
+    end.
 
 %% @doc Stops the pool server normally.  Its supervisor is
 %% `permanent' for it, so the pool is restarted empty.

@@ -180,8 +180,11 @@ never tells you the worker's pid.
     1> ppool:async_queue(nagger, [q1, 10, 1, self()]).
     ok
 
-This is a cast: it returns `ok` even if the pool does not exist, in
-which case the request is silently lost. If the worker cannot be
+This is a cast, but the pool name is checked first: if no pool has
+that name the caller exits with `{noproc, {gen_server, cast, [Name,
+{async, Args}]}}`, as for `run/2`, rather than the request being lost
+silently. (A pool that dies just after the check still loses the
+request.) If the worker cannot be
 started, nobody is told: the request is dropped and a warning is
 logged by the pool server. A free slot is not used up by this.
 
@@ -334,7 +337,6 @@ Limits and caveats
 * There is no way to wait for a worker to finish, other than monitoring
   it yourself using the pid from `run/2` or `sync_queue/2`.
   `async_queue/2` gives you no pid at all.
-* `async_queue/2` to a missing pool silently succeeds.
 * The pool server logs unexpected plain messages with `io:format`.
 * `ppool_nagger` is test code; it is not part of the released package.
 * This is didactic code, and the original is kept as it was, with one
@@ -351,7 +353,7 @@ Development
 You need Erlang/OTP and rebar3.
 
     rebar3 compile
-    rebar3 eunit       # 14 tests
+    rebar3 eunit       # 27 tests
     rebar3 dialyzer
     rebar3 edoc        # writes doc/index.html
 

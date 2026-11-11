@@ -84,9 +84,10 @@ run(Name, Args) ->
     ppool_serv:run(Name, Args).
 
 %% @doc Asks the pool to run a worker as soon as a slot is free,
-%% without waiting.  Always returns `ok' immediately, even if no pool
-%% called `Name' exists (the request is then silently lost).  The
-%% worker's pid is not reported.  If the worker cannot be started the
+%% without waiting.  Returns `ok' immediately.  Exits with `noproc' if
+%% there is no pool called `Name', as {@link run/2} does, so a mistyped
+%% name is not mistaken for success.  The worker's pid is not reported.
+%% If the worker cannot be started the
 %% request is dropped and a warning is logged.
 -spec async_queue(name(), list()) -> ok.
 async_queue(Name, Args) ->

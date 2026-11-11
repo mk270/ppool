@@ -202,6 +202,37 @@ wait_mfa(Pid) ->
     Pid ! i_am_running,
     timer:sleep(3000).
 
+%%% A pool that does not exist is an error for every call that goes
+%%% via the pool server: an exit with noproc (stop_pool/1 returns
+%%% {error, not_found}).  In particular async_queue/2 must not report
+%%% success.
+missing_pool_test_() ->
+    {"Calls to a pool that does not exist are reported as errors; "
+     "calls to a live pool are unaffected",
+     {setup,
+      fun start_ppool/0,
+      fun kill_ppool/1,
+      fun(Name) ->
+        Missing = missing_pool_name(),
+        [?_assertExit({noproc, _}, ppool:run(Missing, [x])),
+         ?_assertExit({noproc, _}, ppool:sync_queue(Missing, [x])),
+         ?_assertExit({noproc, _}, ppool:async_queue(Missing, [x])),
+         ?_assertExit({noproc, _}, ppool:status(Missing)),
+         ?_assertEqual({error, not_found}, ppool:stop_pool(Missing)),
+         ?_test(live_pool_unchanged(Name))]
+      end}}.
+
+missing_pool_name() ->
+    list_to_atom("nopool_" ++
+                 integer_to_list(erlang:unique_integer([positive]))).
+
+live_pool_unchanged(Name) ->
+    Me = self(),
+    ?assertEqual(ok, ppool:async_queue(Name, [async_ok, 100, 1, Me])),
+    ?assertMatch({ok, _}, ppool:run(Name, [run_ok, 100, 1, Me])),
+    ?assertMatch({ok, _}, ppool:sync_queue(Name, [sync_ok, 100, 1, Me])),
+    ?assertMatch({state, _, _, _, _, Name}, ppool:status(Name)).
+
 %%% A worker that fails to start must not take the pool down.
 %%%
 %%% Each test gets a fresh pool (limit 2) whose start function is
