@@ -9,6 +9,7 @@
   {description, "Worker pool library from LearnYouSomeErlang"},
   {licenses, ["MIT"]},
   {links, [{"GitHub", "https://github.com/mk270/ppool"}]},
+  {files, ["src", "rebar.config", "README.md", "LICENSE.txt"]},
   {exclude_files, ["*.lock"]},
   {mod, {ppool, []}}
 ]}.
