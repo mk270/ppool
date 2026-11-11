@@ -9,8 +9,11 @@
 -behaviour(supervisor).
 
 %% @doc Starts the supervisor of the pool `Name'.
--spec start_link(atom(), integer(), {module(), atom(), list()}) ->
-          {ok, pid()} | ignore | {error, term()}.
+-spec start_link(Name, Limit, MFA) -> Result
+              when Name   :: atom(),
+                   Limit  :: integer(),
+                   MFA    :: {module(), atom(), list()},
+                   Result :: {ok, pid()} | ignore | {error, term()}.
 start_link(Name, Limit, MFA) ->
     supervisor:start_link(?MODULE, {Name, Limit, MFA}).
 

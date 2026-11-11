@@ -33,12 +33,17 @@
 
 %% @doc Application callback; starts the top-level supervisor.
 %% Not for direct use: call `application:start(ppool)'.
--spec start(normal, term()) -> {ok, pid()} | ignore | {error, term()}.
+-spec start(Type, StartArgs) -> Result
+              when Type      :: normal,
+                   StartArgs :: term(),
+                   Result    :: {ok, pid()} | ignore | {error, term()}.
 start(normal, _Args) ->
     ppool_supersup:start_link().
 
 %% @doc Application callback; does nothing.
--spec stop(term()) -> ok.
+-spec stop(State) -> Result
+              when State  :: term(),
+                   Result :: ok.
 stop(_State) ->
     ok.
 
@@ -56,8 +61,11 @@ stop(_State) ->
 %% the third argument is not a 3-tuple.
 %%
 %% Limits of zero or less are accepted, but then no worker ever runs.
--spec start_pool(name(), integer(), mfa_spec()) ->
-          {ok, pid()} | {error, term()}.
+-spec start_pool(Name, Limit, MFA) -> Result
+              when Name   :: name(),
+                   Limit  :: integer(),
+                   MFA    :: mfa_spec(),
+                   Result :: {ok, pid()} | {error, term()}.
 start_pool(Name, Limit, {M,F,A}) ->
     ppool_supersup:start_pool(Name, Limit, {M,F,A}).
 
@@ -65,7 +73,9 @@ start_pool(Name, Limit, {M,F,A}) ->
 %% (after giving them time to shut down if they trap exits) and
 %% discarding anything queued.  Returns `ok', or `{error, not_found}'
 %% if there is no such pool.
--spec stop_pool(name()) -> ok | {error, term()}.
+-spec stop_pool(Name) -> Result
+              when Name   :: name(),
+                   Result :: ok | {error, term()}.
 stop_pool(Name) ->
     ppool_supersup:stop_pool(Name).
 
@@ -78,8 +88,12 @@ stop_pool(Name) ->
 %% running workers and its queue are not affected, and no slot is used.
 %% (`undefined' as a pid is possible if the start function returns
 %% `ignore'.)
--spec run(name(), list()) ->
-          {ok, pid() | undefined} | noalloc | {error, term()}.
+-spec run(Name, Args) -> Result
+              when Name   :: name(),
+                   Args   :: list(),
+                   Result :: {ok, pid() | undefined}
+                           | noalloc
+                           | {error, term()}.
 run(Name, Args) ->
     ppool_serv:run(Name, Args).
 
@@ -89,7 +103,10 @@ run(Name, Args) ->
 %% name is not mistaken for success.  The worker's pid is not reported.
 %% If the worker cannot be started the
 %% request is dropped and a warning is logged.
--spec async_queue(name(), list()) -> ok.
+-spec async_queue(Name, Args) -> Result
+              when Name   :: name(),
+                   Args   :: list(),
+                   Result :: ok.
 async_queue(Name, Args) ->
     ppool_serv:async_queue(Name, Args).
 
@@ -100,8 +117,10 @@ async_queue(Name, Args) ->
 %% server dies if it goes away while the caller waits.  If the worker
 %% cannot be started returns `{error, Reason}', as {@link run/2} does,
 %% and the next request in the queue is tried.
--spec sync_queue(name(), list()) ->
-          {ok, pid() | undefined} | {error, term()}.
+-spec sync_queue(Name, Args) -> Result
+              when Name   :: name(),
+                   Args   :: list(),
+                   Result :: {ok, pid() | undefined} | {error, term()}.
 sync_queue(Name, Args) ->
     ppool_serv:sync_queue(Name, Args).
 
@@ -109,6 +128,8 @@ sync_queue(Name, Args) ->
 %% tuple, `{state, Limit, Sup, Refs, Queue, Name}'.  Intended for
 %% debugging only; its shape is not a stable interface.  `Limit' is the
 %% number of free slots.  Exits with `noproc' if there is no pool.
--spec status(name()) -> tuple().
+-spec status(Name) -> Result
+              when Name   :: name(),
+                   Result :: tuple().
 status(Name) ->
 	ppool_serv:status(Name).

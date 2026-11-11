@@ -9,8 +9,9 @@
 -behaviour(supervisor).
 
 %% @doc Starts the worker supervisor for the given `{M, F, A}'.
--spec start_link({module(), atom(), list()}) ->
-          {ok, pid()} | ignore | {error, term()}.
+-spec start_link(MFA) -> Result
+              when MFA    :: {module(), atom(), list()},
+                   Result :: {ok, pid()} | ignore | {error, term()}.
 start_link(MFA = {_,_,_}) ->
     supervisor:start_link(?MODULE, MFA).
 

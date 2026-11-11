@@ -11,14 +11,16 @@
 -export([stop/0]).
 
 %% @doc Starts the top-level supervisor and registers it as `ppool'.
--spec start_link() -> {ok, pid()} | ignore | {error, term()}.
+-spec start_link() -> Result
+              when Result :: {ok, pid()} | ignore | {error, term()}.
 start_link() ->
     supervisor:start_link({local, ppool}, ?MODULE, []).
 
 %% @doc Kills the top-level supervisor, and with it every pool.
 %% Returns `true' if it was running, `ok' otherwise.  Not used by the
 %% library itself.
--spec stop() -> ok | true.
+-spec stop() -> Result
+              when Result :: ok | true.
 %% technically, a supervisor can not be killed in an easy way.
 %% Let's do it brutally!
 stop() ->
@@ -29,8 +31,11 @@ stop() ->
     end.
 
 %% @doc See `ppool:start_pool/3'.
--spec start_pool(atom(), integer(), {module(), atom(), list()}) ->
-          {ok, pid()} | {error, term()}.
+-spec start_pool(Name, Limit, MFA) -> Result
+              when Name   :: atom(),
+                   Limit  :: integer(),
+                   MFA    :: {module(), atom(), list()},
+                   Result :: {ok, pid()} | {error, term()}.
 start_pool(Name, Limit, MFA) ->
     ChildSpec = {Name,
                  {ppool_sup, start_link, [Name, Limit, MFA]},
@@ -38,7 +43,9 @@ start_pool(Name, Limit, MFA) ->
     supervisor:start_child(ppool, ChildSpec).
 
 %% @doc See `ppool:stop_pool/1'.
--spec stop_pool(atom()) -> ok | {error, term()}.
+-spec stop_pool(Name) -> Result
+              when Name   :: atom(),
+                   Result :: ok | {error, term()}.
 stop_pool(Name) ->
     supervisor:terminate_child(ppool, Name),
     supervisor:delete_child(ppool, Name).

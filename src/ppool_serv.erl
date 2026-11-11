@@ -28,28 +28,42 @@
 				name}).
 
 %% @doc Starts an unlinked pool server (not used by the library itself).
--spec start(atom(), integer(), pid(), {module(), atom(), list()}) ->
-          {ok, pid()} | ignore | {error, term()}.
+-spec start(Name, Limit, Sup, MFA) -> Result
+              when Name   :: atom(),
+                   Limit  :: integer(),
+                   Sup    :: pid(),
+                   MFA    :: {module(), atom(), list()},
+                   Result :: {ok, pid()} | ignore | {error, term()}.
 start(Name, Limit, Sup, MFA) when is_atom(Name), is_integer(Limit) ->
     gen_server:start({local, Name}, ?MODULE, {Limit, MFA, Sup, Name}, []).
 
 %% @doc Starts a pool server linked to the caller, registered as `Name'.
 %% `Sup' is the pool's supervisor, in which the worker supervisor is
 %% started.
--spec start_link(atom(), integer(), pid(), {module(), atom(), list()}) ->
-          {ok, pid()} | ignore | {error, term()}.
+-spec start_link(Name, Limit, Sup, MFA) -> Result
+              when Name   :: atom(),
+                   Limit  :: integer(),
+                   Sup    :: pid(),
+                   MFA    :: {module(), atom(), list()},
+                   Result :: {ok, pid()} | ignore | {error, term()}.
 start_link(Name, Limit, Sup, MFA) when is_atom(Name), is_integer(Limit) ->
     gen_server:start_link({local, Name}, ?MODULE, {Limit, MFA, Sup, Name}, []).
 
 %% @doc See `ppool:run/2'.
--spec run(atom(), list()) ->
-          {ok, pid() | undefined} | noalloc | {error, term()}.
+-spec run(Name, Args) -> Result
+              when Name   :: atom(),
+                   Args   :: list(),
+                   Result :: {ok, pid() | undefined}
+                           | noalloc
+                           | {error, term()}.
 run(Name, Args) ->
     gen_server:call(Name, {run, Args}).
 
 %% @doc See `ppool:sync_queue/2'.
--spec sync_queue(atom(), list()) ->
-          {ok, pid() | undefined} | {error, term()}.
+-spec sync_queue(Name, Args) -> Result
+              when Name   :: atom(),
+                   Args   :: list(),
+                   Result :: {ok, pid() | undefined} | {error, term()}.
 sync_queue(Name, Args) ->
     gen_server:call(Name, {sync, Args}, infinity).
 
@@ -61,7 +75,10 @@ sync_queue(Name, Args) ->
 %% in this module do when there is no pool: exit with `noproc'.  The
 %% check and the cast are not atomic; a pool that dies in between
 %% still loses the request, as it would anyway.
--spec async_queue(atom(), list()) -> ok.
+-spec async_queue(Name, Args) -> Result
+              when Name   :: atom(),
+                   Args   :: list(),
+                   Result :: ok.
 async_queue(Name, Args) ->
     case whereis(Name) of
         undefined ->
@@ -72,12 +89,16 @@ async_queue(Name, Args) ->
 
 %% @doc Stops the pool server normally.  Its supervisor is
 %% `permanent' for it, so the pool is restarted empty.
--spec stop(atom()) -> ok.
+-spec stop(Name) -> Result
+              when Name   :: atom(),
+                   Result :: ok.
 stop(Name) ->
     gen_server:call(Name, stop).
 
 %% @doc See `ppool:status/1'.
--spec status(atom()) -> tuple().
+-spec status(Name) -> Result
+              when Name   :: atom(),
+                   Result :: tuple().
 status(Name) ->
 	gen_server:call(Name, status).
 
