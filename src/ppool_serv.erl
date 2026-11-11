@@ -9,6 +9,7 @@
 -behaviour(gen_server).
 -export([start/4, start_link/4, run/2, sync_queue/2, async_queue/2, stop/1]).
 -export([status/1]).
+-export_type([state/0]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          code_change/3, terminate/2]).
 
@@ -21,18 +22,26 @@
           supervisor,
           [ppool_worker_sup]}).
 
--record(state, {limit=0,
-                sup,
-                refs,
-                queue=queue:new(),
-				name}).
+-record(state, {limit=0 :: integer(),
+                sup :: pid() | undefined,
+                refs :: gb_sets:set(reference()),
+                queue=queue:new() :: queue:queue(queued()),
+                name :: ppool:name()}).
+
+-type state() :: #state{}.
+
+%% What a pool server answers to a call.
+-type reply() :: {ok, pid()} | {error, term()} | noalloc | state().
+
+%% A waiting request: `{From, Args}' for a sync one, `Args' for an async one.
+-type queued() :: {gen_server:from(), list()} | list().
 
 %% @doc Starts an unlinked pool server (not used by the library itself).
 -spec start(Name, Limit, Sup, MFA) -> Result
-              when Name   :: atom(),
+              when Name   :: ppool:name(),
                    Limit  :: integer(),
                    Sup    :: pid(),
-                   MFA    :: {module(), atom(), list()},
+                   MFA    :: ppool:mfa_spec(),
                    Result :: {ok, pid()} | ignore | {error, term()}.
 start(Name, Limit, Sup, MFA) when is_atom(Name), is_integer(Limit) ->
     gen_server:start({local, Name}, ?MODULE, {Limit, MFA, Sup, Name}, []).
@@ -41,17 +50,17 @@ start(Name, Limit, Sup, MFA) when is_atom(Name), is_integer(Limit) ->
 %% `Sup' is the pool's supervisor, in which the worker supervisor is
 %% started.
 -spec start_link(Name, Limit, Sup, MFA) -> Result
-              when Name   :: atom(),
+              when Name   :: ppool:name(),
                    Limit  :: integer(),
                    Sup    :: pid(),
-                   MFA    :: {module(), atom(), list()},
+                   MFA    :: ppool:mfa_spec(),
                    Result :: {ok, pid()} | ignore | {error, term()}.
 start_link(Name, Limit, Sup, MFA) when is_atom(Name), is_integer(Limit) ->
     gen_server:start_link({local, Name}, ?MODULE, {Limit, MFA, Sup, Name}, []).
 
 %% @doc See `ppool:run/2'.
 -spec run(Name, Args) -> Result
-              when Name   :: atom(),
+              when Name   :: ppool:name(),
                    Args   :: list(),
                    Result :: {ok, pid() | undefined}
                            | noalloc
@@ -61,7 +70,7 @@ run(Name, Args) ->
 
 %% @doc See `ppool:sync_queue/2'.
 -spec sync_queue(Name, Args) -> Result
-              when Name   :: atom(),
+              when Name   :: ppool:name(),
                    Args   :: list(),
                    Result :: {ok, pid() | undefined} | {error, term()}.
 sync_queue(Name, Args) ->
@@ -76,7 +85,7 @@ sync_queue(Name, Args) ->
 %% check and the cast are not atomic; a pool that dies in between
 %% still loses the request, as it would anyway.
 -spec async_queue(Name, Args) -> Result
-              when Name   :: atom(),
+              when Name   :: ppool:name(),
                    Args   :: list(),
                    Result :: ok.
 async_queue(Name, Args) ->
@@ -90,15 +99,15 @@ async_queue(Name, Args) ->
 %% @doc Stops the pool server normally.  Its supervisor is
 %% `permanent' for it, so the pool is restarted empty.
 -spec stop(Name) -> Result
-              when Name   :: atom(),
+              when Name   :: ppool:name(),
                    Result :: ok.
 stop(Name) ->
     gen_server:call(Name, stop).
 
 %% @doc See `ppool:status/1'.
 -spec status(Name) -> Result
-              when Name   :: atom(),
-                   Result :: tuple().
+              when Name   :: ppool:name(),
+                   Result :: state().
 status(Name) ->
 	gen_server:call(Name, status).
 
@@ -108,6 +117,10 @@ status(Name) ->
 %% The `limit' field counts free slots; `refs' holds the monitor
 %% references of running workers.
 %% Gen server
+-spec init(Args) -> Result
+              when Args   :: {integer(), ppool:mfa_spec(), pid(),
+                              ppool:name()},
+                   Result :: {ok, state()}.
 init({Limit, MFA, Sup, Name}) ->
     %% We need to find the Pid of the worker supervisor from here,
     %% but alas, this would be calling the supervisor while it waits for us!
@@ -116,6 +129,12 @@ init({Limit, MFA, Sup, Name}) ->
 
 %% A worker that fails to start must not take the pool down: the caller
 %% (if any) gets {error, Reason}, and no slot is used.
+-spec run_worker(State, Args, Sync) -> Result
+              when State  :: state(),
+                   Args   :: list(),
+                   Sync   :: boolean(),
+                   Result :: {reply, {ok, pid()} | {error, term()}, state()}
+                           | {noreply, state()}.
 run_worker(S = #state{sup=Sup}, Args, Sync) ->
 	case start_worker(Sup, Args) of
 		{ok, Pid} ->
@@ -132,6 +151,10 @@ run_worker(S = #state{sup=Sup}, Args, Sync) ->
 
 %% supervisor:start_child/2 returns {ok, Pid}, {ok, Pid, Info} or
 %% {error, Reason}; a started worker is tracked whatever Info says.
+-spec start_worker(Sup, Args) -> Result
+              when Sup    :: pid(),
+                   Args   :: list(),
+                   Result :: {ok, pid()} | {error, term()}.
 start_worker(Sup, Args) ->
 	case supervisor:start_child(Sup, Args) of
 		{ok, Pid} -> {ok, Pid};
@@ -139,10 +162,20 @@ start_worker(Sup, Args) ->
 		{error, _} = Error -> Error
 	end.
 
+-spec start_failed(State, Reason) -> Result
+              when State  :: state(),
+                   Reason :: term(),
+                   Result :: ok.
 start_failed(#state{name=Name}, Reason) ->
 	error_logger:warning_msg("ppool ~p: could not start a worker: ~p~n",
 	                         [Name, Reason]).
 
+-spec monitor_worker(State, Pid, Sync) -> Result
+              when State  :: state(),
+                   Pid    :: pid(),
+                   Sync   :: boolean(),
+                   Result :: {reply, {ok, pid()}, state()}
+                           | {noreply, state()}.
 monitor_worker(S = #state{limit=N, refs=R}, Pid, Sync) ->
 	Ref = erlang:monitor(process, Pid),
 	NewLimit = N - 1,
@@ -154,6 +187,13 @@ monitor_worker(S = #state{limit=N, refs=R}, Pid, Sync) ->
 			{noreply, NewState}
 	end.
 
+-spec handle_call(Request, From, State) -> Result
+              when Request :: term(),
+                   From    :: gen_server:from(),
+                   State   :: state(),
+                   Result  :: {reply, reply(), state()}
+                            | {noreply, state()}
+                            | {stop, normal, ok, state()}.
 handle_call({run, Args}, _From, S = #state{limit=N}) when N > 0 ->
 	run_worker(S, Args, true);
 handle_call({run, _Args}, _From, S=#state{limit=N}) when N =< 0 ->
@@ -172,6 +212,10 @@ handle_call(_Msg, _From, State) ->
     {noreply, State}.
 
 
+-spec handle_cast(Request, State) -> Result
+              when Request :: term(),
+                   State   :: state(),
+                   Result  :: {noreply, state()}.
 handle_cast({async, Args}, S=#state{limit=N}) when N > 0 ->
 	run_worker(S, Args, false);
 handle_cast({async, Args}, S=#state{limit=N, queue=Q}) when N =< 0 ->
@@ -181,6 +225,10 @@ handle_cast({async, Args}, S=#state{limit=N, queue=Q}) when N =< 0 ->
 handle_cast(_Msg, State) ->
     {noreply, State}.
 
+-spec handle_info(Info, State) -> Result
+              when Info   :: term(),
+                   State  :: state(),
+                   Result :: {noreply, state()}.
 handle_info(_Msg = {'DOWN', Ref, process, _Pid, _Reason}, S = #state{refs=Refs}) ->
     case gb_sets:is_element(Ref, Refs) of
         true -> handle_down_worker(Ref, S);
@@ -194,12 +242,25 @@ handle_info(Msg, State) ->
     io:format("Unknown msg: ~p~n", [Msg]),
     {noreply, State}.
 
+-spec code_change(OldVsn, State, Extra) -> Result
+              when OldVsn :: term(),
+                   State  :: state(),
+                   Extra  :: term(),
+                   Result :: {ok, state()}.
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
+-spec terminate(Reason, State) -> Result
+              when Reason :: term(),
+                   State  :: state(),
+                   Result :: ok.
 terminate(_Reason, _State) ->
     ok.
 
+-spec handle_down_worker(Ref, State) -> Result
+              when Ref    :: reference(),
+                   State  :: state(),
+                   Result :: {noreply, state()}.
 handle_down_worker(Ref, S = #state{limit=L, sup=Sup, refs=Refs}) ->
     case queue:out(S#state.queue) of
 		{{value, V}, Q} ->
@@ -221,6 +282,13 @@ handle_down_worker(Ref, S = #state{limit=L, sup=Sup, refs=Refs}) ->
             {noreply, S#state{limit=L+1, refs=gb_sets:delete(Ref,Refs)}}
     end.
 
+-spec replace_worker(Ref, Queued, Queue, Pid, State) -> Result
+              when Ref    :: reference(),
+                   Queued :: queued(),
+                   Queue  :: queue:queue(),
+                   Pid    :: pid(),
+                   State  :: state(),
+                   Result :: {noreply, state()}.
 replace_worker(Ref, V, Q, Pid, S = #state{refs=Refs}) ->
             NewRef = erlang:monitor(process, Pid),
             NewRefs = gb_sets:insert(NewRef, gb_sets:delete(Ref,Refs)),

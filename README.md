@@ -46,9 +46,9 @@ The public API is the module `ppool`. The other modules are internal.
 Installing
 ==========
 
-ppool 1.2.1 is on hex.pm (https://hex.pm/packages/ppool). With rebar3:
+ppool 1.2.2 is on hex.pm (https://hex.pm/packages/ppool). With rebar3:
 
-    {deps, [{ppool, "1.2.1"}]}.
+    {deps, [{ppool, "1.2.2"}]}.
 
 or from git (the repository is at https://github.com/mk270/ppool):
 

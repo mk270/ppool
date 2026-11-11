@@ -10,11 +10,15 @@
 
 %% @doc Starts the worker supervisor for the given `{M, F, A}'.
 -spec start_link(MFA) -> Result
-              when MFA    :: {module(), atom(), list()},
+              when MFA    :: ppool:mfa_spec(),
                    Result :: {ok, pid()} | ignore | {error, term()}.
 start_link(MFA = {_,_,_}) ->
     supervisor:start_link(?MODULE, MFA).
 
+-spec init(MFA) -> Result
+              when MFA    :: ppool:mfa_spec(),
+                   Result :: {ok, {supervisor:sup_flags(),
+                                   [supervisor:child_spec()]}}.
 init({M,F,A}) ->
     MaxRestart = 5,
     MaxTime = 3600,

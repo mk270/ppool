@@ -32,9 +32,9 @@ stop() ->
 
 %% @doc See `ppool:start_pool/3'.
 -spec start_pool(Name, Limit, MFA) -> Result
-              when Name   :: atom(),
+              when Name   :: ppool:name(),
                    Limit  :: integer(),
-                   MFA    :: {module(), atom(), list()},
+                   MFA    :: ppool:mfa_spec(),
                    Result :: {ok, pid()} | {error, term()}.
 start_pool(Name, Limit, MFA) ->
     ChildSpec = {Name,
@@ -44,12 +44,16 @@ start_pool(Name, Limit, MFA) ->
 
 %% @doc See `ppool:stop_pool/1'.
 -spec stop_pool(Name) -> Result
-              when Name   :: atom(),
-                   Result :: ok | {error, term()}.
+              when Name   :: ppool:name(),
+                   Result :: ok | {error, not_found}.
 stop_pool(Name) ->
     supervisor:terminate_child(ppool, Name),
     supervisor:delete_child(ppool, Name).
 
+-spec init(Args) -> Result
+              when Args   :: [],
+                   Result :: {ok, {supervisor:sup_flags(),
+                                   [supervisor:child_spec()]}}.
 init([]) ->
     MaxRestart = 6,
     MaxTime = 3000,

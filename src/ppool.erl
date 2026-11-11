@@ -75,7 +75,7 @@ start_pool(Name, Limit, {M,F,A}) ->
 %% if there is no such pool.
 -spec stop_pool(Name) -> Result
               when Name   :: name(),
-                   Result :: ok | {error, term()}.
+                   Result :: ok | {error, not_found}.
 stop_pool(Name) ->
     ppool_supersup:stop_pool(Name).
 
@@ -130,6 +130,6 @@ sync_queue(Name, Args) ->
 %% number of free slots.  Exits with `noproc' if there is no pool.
 -spec status(Name) -> Result
               when Name   :: name(),
-                   Result :: tuple().
+                   Result :: ppool_serv:state().
 status(Name) ->
 	ppool_serv:status(Name).

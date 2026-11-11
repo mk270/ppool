@@ -10,13 +10,17 @@
 
 %% @doc Starts the supervisor of the pool `Name'.
 -spec start_link(Name, Limit, MFA) -> Result
-              when Name   :: atom(),
+              when Name   :: ppool:name(),
                    Limit  :: integer(),
-                   MFA    :: {module(), atom(), list()},
+                   MFA    :: ppool:mfa_spec(),
                    Result :: {ok, pid()} | ignore | {error, term()}.
 start_link(Name, Limit, MFA) ->
     supervisor:start_link(?MODULE, {Name, Limit, MFA}).
 
+-spec init(Args) -> Result
+              when Args   :: {ppool:name(), integer(), ppool:mfa_spec()},
+                   Result :: {ok, {supervisor:sup_flags(),
+                                   [supervisor:child_spec()]}}.
 init({Name, Limit, MFA}) ->
     MaxRestart = 1,
     MaxTime = 3000,
