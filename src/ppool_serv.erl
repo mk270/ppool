@@ -1,5 +1,10 @@
 % Copyright (c) 2009 Frederic Trottier-Hebert; see LICENSE.txt for terms
 
+%% @doc Internal: the pool server, a gen_server registered under the
+%% pool's name.  It tracks how many workers are running, monitors them,
+%% and holds the queue of waiting requests.  Applications should use
+%% the `ppool' module instead.
+%% @end
 -module(ppool_serv).
 -behaviour(gen_server).
 -export([start/4, start_link/4, run/2, sync_queue/2, async_queue/2, stop/1]).
@@ -22,27 +27,51 @@
                 queue=queue:new(),
 				name}).
 
+%% @doc Starts an unlinked pool server (not used by the library itself).
+-spec start(atom(), integer(), pid(), {module(), atom(), list()}) ->
+          {ok, pid()} | ignore | {error, term()}.
 start(Name, Limit, Sup, MFA) when is_atom(Name), is_integer(Limit) ->
     gen_server:start({local, Name}, ?MODULE, {Limit, MFA, Sup, Name}, []).
 
+%% @doc Starts a pool server linked to the caller, registered as `Name'.
+%% `Sup' is the pool's supervisor, in which the worker supervisor is
+%% started.
+-spec start_link(atom(), integer(), pid(), {module(), atom(), list()}) ->
+          {ok, pid()} | ignore | {error, term()}.
 start_link(Name, Limit, Sup, MFA) when is_atom(Name), is_integer(Limit) ->
     gen_server:start_link({local, Name}, ?MODULE, {Limit, MFA, Sup, Name}, []).
 
+%% @doc See `ppool:run/2'.
+-spec run(atom(), list()) -> {ok, pid() | undefined} | noalloc.
 run(Name, Args) ->
     gen_server:call(Name, {run, Args}).
 
+%% @doc See `ppool:sync_queue/2'.
+-spec sync_queue(atom(), list()) -> {ok, pid() | undefined}.
 sync_queue(Name, Args) ->
     gen_server:call(Name, {sync, Args}, infinity).
 
+%% @doc See `ppool:async_queue/2'.
+-spec async_queue(atom(), list()) -> ok.
 async_queue(Name, Args) ->
     gen_server:cast(Name, {async, Args}).
 
+%% @doc Stops the pool server normally.  Its supervisor is
+%% `permanent' for it, so the pool is restarted empty.
+-spec stop(atom()) -> ok.
 stop(Name) ->
     gen_server:call(Name, stop).
 
+%% @doc See `ppool:status/1'.
+-spec status(atom()) -> tuple().
 status(Name) ->
 	gen_server:call(Name, status).
 
+%% The gen_server callbacks follow.  Requests: `{run, Args}',
+%% `{sync, Args}' (calls) and `{async, Args}' (cast).  The queue holds
+%% `{From, Args}' for sync requests and plain `Args' for async ones.
+%% The `limit' field counts free slots; `refs' holds the monitor
+%% references of running workers.
 %% Gen server
 init({Limit, MFA, Sup, Name}) ->
     %% We need to find the Pid of the worker supervisor from here,
