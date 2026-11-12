@@ -358,8 +358,7 @@ You need Erlang/OTP and rebar3.
     rebar3 edoc        # writes doc/index.html
 
 The API documentation is generated from edoc comments in `src/`. The
-test suite starts the application and uses `ppool_nagger`. (It uses
-`now/0`, which gives a deprecation warning on current OTP.)
+test suite starts the application and uses `ppool_nagger`.
 
 Licence and attribution
 =======================
