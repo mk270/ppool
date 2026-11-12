@@ -47,7 +47,10 @@ start_pool(Name, Limit, MFA) ->
               when Name   :: ppool:name(),
                    Result :: ok | {error, not_found}.
 stop_pool(Name) ->
-    supervisor:terminate_child(ppool, Name),
+    %% The result is deliberately ignored: if there is no such child,
+    %% delete_child/2 reports {error, not_found} too, and otherwise it
+    %% is delete_child/2's result that says whether the pool is gone.
+    _ = supervisor:terminate_child(ppool, Name),
     supervisor:delete_child(ppool, Name).
 
 -spec init(Args) -> Result
