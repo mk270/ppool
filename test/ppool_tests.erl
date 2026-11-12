@@ -2,7 +2,7 @@
 
 -module(ppool_tests).
 -include_lib("eunit/include/eunit.hrl").
--export([start_worker/1, init_exit/0]).
+-export([start_worker/1, init_exit/0, start_any/3]).
 
 %%% All Test Fixtures
 start_test_() ->
@@ -639,3 +639,114 @@ restart_after_server_crash(Name) ->
     ?assertMatch({ok, _}, ppool:run(Name, [ok])),
     ?assertMatch({ok, _}, ppool:run(Name, [ok])),
     ?assertEqual(noalloc, ppool:run(Name, [ok])).
+
+%%% Front-door argument checks of ppool:start_pool/3.
+%%%
+%%% The wrong-typed calls go through start_any/3 (called with apply/3),
+%%% so that dialyzer does not see a deliberate spec violation.
+-spec start_any(term(), term(), term()) -> term().
+start_any(Name, Limit, MFA) ->
+    ppool:start_pool(Name, Limit, MFA).
+
+try_start(Name, Limit, MFA) ->
+    apply(?MODULE, start_any, [Name, Limit, MFA]).
+
+pool_children() ->
+    lists:sort(supervisor:which_children(ppool)).
+
+validation_test_() ->
+    {"Bad arguments to start_pool/3 are returned as errors, the first "
+     "failure in the order name, limit, mfa; nothing is started or "
+     "registered",
+     {setup,
+      fun find_unique_name/0,
+      fun(Name) ->
+        [?_test(invalid_names(Name)),
+         ?_test(invalid_limits(Name)),
+         ?_test(invalid_mfas(Name)),
+         ?_test(check_order(Name)),
+         ?_test(rejection_starts_nothing(Name)),
+         ?_test(valid_start_still_works(Name))]
+      end}}.
+
+invalid_names(_Name) ->
+    MFA = {ppool_tests, start_worker, []},
+    ?assertEqual({error, {invalid_name, "pool"}},
+                 try_start("pool", 1, MFA)),
+    ?assertEqual({error, {invalid_name, <<"pool">>}},
+                 try_start(<<"pool">>, 1, MFA)),
+    ?assertEqual({error, {invalid_name, {a, b}}},
+                 try_start({a, b}, 1, MFA)),
+    ?assertEqual({error, {invalid_name, 42}}, try_start(42, 1, MFA)).
+
+invalid_limits(Name) ->
+    MFA = {ppool_tests, start_worker, []},
+    lists:foreach(
+      fun(L) ->
+          ?assertEqual({error, {invalid_limit, L}},
+                       try_start(Name, L, MFA))
+      end,
+      [0, -1, -100, 1.5, 2.0, infinity, "2", {2}]).
+
+invalid_mfas(Name) ->
+    lists:foreach(
+      fun(MFA) ->
+          ?assertEqual({error, {invalid_mfa, MFA}},
+                       try_start(Name, 1, MFA))
+      end,
+      [{ppool_tests, start_worker},
+       {ppool_tests, start_worker, [], extra},
+       {"ppool_tests", start_worker, []},
+       {ppool_tests, "start_worker", []},
+       {ppool_tests, start_worker, not_a_list},
+       {ppool_tests, start_worker, {}},
+       ppool_tests,
+       []]).
+
+check_order(Name) ->
+    MFA = {ppool_tests, start_worker, []},
+    %% all three bad: the name is reported
+    ?assertEqual({error, {invalid_name, "p"}},
+                 try_start("p", 0, bad)),
+    %% limit and MFA bad: the limit is reported
+    ?assertEqual({error, {invalid_limit, 0}},
+                 try_start(Name, 0, bad)),
+    ?assertEqual({error, {invalid_name, "p"}},
+                 try_start("p", 1, bad)),
+    ?assertEqual({error, {invalid_name, "p"}},
+                 try_start("p", 0, MFA)),
+    %% a bad name is reported even when the name is registered
+    ?assertEqual({error, {invalid_limit, 0}},
+                 try_start(ppool, 0, MFA)).
+
+rejection_starts_nothing(Name) ->
+    MFA = {ppool_tests, start_worker, []},
+    Before = pool_children(),
+    Registered = lists:sort(registered()),
+    try_start(Name, 0, MFA),
+    try_start(Name, -1, MFA),
+    try_start(Name, 1, {ppool_tests, start_worker}),
+    try_start("x", 1, MFA),
+    ?assertEqual(undefined, whereis(Name)),
+    ?assertEqual(Before, pool_children()),
+    ?assertEqual(Registered, lists:sort(registered())).
+
+valid_start_still_works(Name) ->
+    MFA = {ppool_tests, start_worker, []},
+    Before = length(pool_children()),
+    ?assertMatch({ok, _}, ppool:start_pool(Name, 1, MFA)),
+    try
+        ?assert(is_pid(whereis(Name))),
+        ?assertEqual(Before + 1, length(pool_children())),
+        ?assertMatch({error, {already_started, _}},
+                     ppool:start_pool(Name, 1, MFA)),
+        ?assertMatch({ok, _}, ppool:run(Name, [ok]))
+    after
+        ppool:stop_pool(Name)
+    end,
+    ?assertEqual(undefined, whereis(Name)),
+    %% a limit of one and a MFA with extra start arguments are valid
+    ?assertMatch({ok, _},
+                 ppool:start_pool(Name, 1, {ppool_tests, start_worker,
+                                            [ok]})),
+    ppool:stop_pool(Name).

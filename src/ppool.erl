@@ -26,7 +26,13 @@
 %% The name of a pool; also the registered name of its pool server.
 -type mfa_spec() :: {module(), atom(), list()}.
 %% Module, function and leading arguments of a worker's start function.
--export_type([name/0, mfa_spec/0]).
+-type start_error() :: {invalid_name, term()}
+                     | {invalid_limit, term()}
+                     | {invalid_mfa, term()}
+                     | {already_started, pid()}
+                     | term().
+%% Reason of a failed {@link start_pool/3}; see there.
+-export_type([name/0, mfa_spec/0, start_error/0]).
 -export([start/2, stop/1, start_pool/3,
 		 status/1,
          run/2, sync_queue/2, async_queue/2, stop_pool/1]).
@@ -52,22 +58,38 @@ stop(_State) ->
 %% where `{M, F, A}' is the third argument and `Args' the list given
 %% to {@link run/2}, {@link sync_queue/2} or {@link async_queue/2}.
 %%
-%% `Name' must be an atom and `Limit' an integer, and `Name' must not
-%% be registered already by any process (including another pool).
-%% Returns `{ok, SupPid}' with the pid of the pool's supervisor, or
-%% `{error, Reason}' (for example when the name is taken or the
-%% arguments are of the wrong type).  Exits with `noproc' if the
-%% ppool application is not running, and with `function_clause' if
-%% the third argument is not a 3-tuple.
-%%
-%% Limits of zero or less are accepted, but then no worker ever runs.
+%% The arguments are checked first, in this order, before anything is
+%% started, and the first failure is returned as an error: nothing is
+%% started or registered.
+%% <ul>
+%% <li>`{error, {invalid_name, Name}}' if `Name' is not an atom;</li>
+%% <li>`{error, {invalid_limit, Limit}}' if `Limit' is not an integer
+%% or is less than 1;</li>
+%% <li>`{error, {invalid_mfa, MFA}}' if `MFA' is not a tuple
+%% `{Module, Function, Args}' with atoms `Module' and `Function' and a
+%% list `Args'.</li>
+%% </ul>
+%% Otherwise returns `{ok, SupPid}' with the pid of the pool's
+%% supervisor, or `{error, Reason}' from starting it.  A `Name' that
+%% is already used by a pool gives `{error, {already_started, Pid}}';
+%% a `Name' registered by some other process gives an error whose
+%% reason also contains `{already_started, Pid}'.  Exits with `noproc'
+%% if the ppool application is not running.
 -spec start_pool(Name, Limit, MFA) -> Result
               when Name   :: name(),
-                   Limit  :: integer(),
+                   Limit  :: pos_integer(),
                    MFA    :: mfa_spec(),
-                   Result :: {ok, pid()} | {error, term()}.
-start_pool(Name, Limit, {M,F,A}) ->
-    ppool_supersup:start_pool(Name, Limit, {M,F,A}).
+                   Result :: {ok, pid()} | {error, start_error()}.
+start_pool(Name, _Limit, _MFA) when not is_atom(Name) ->
+    {error, {invalid_name, Name}};
+start_pool(_Name, Limit, _MFA)
+  when not is_integer(Limit); Limit < 1 ->
+    {error, {invalid_limit, Limit}};
+start_pool(Name, Limit, MFA = {M, F, A})
+  when is_atom(M), is_atom(F), is_list(A) ->
+    ppool_supersup:start_pool(Name, Limit, MFA);
+start_pool(_Name, _Limit, MFA) ->
+    {error, {invalid_mfa, MFA}}.
 
 %% @doc Stops the pool called `Name', killing its running workers
 %% (after giving them time to shut down if they trap exits) and
