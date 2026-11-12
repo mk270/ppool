@@ -52,12 +52,18 @@ realloc_test_() ->
 queue_test_() ->
     {"The queue function can be used to run the function as soon as possible. "
      "If no space is available, the worker call is added to the queue.",
-     {foreach,
+     {setup,
       fun start_ppool/0,
       fun kill_ppool/1,
-      [fun(Name) -> ?_test(test_async_queue(Name)) end,
-       fun(Name) -> ?_test(test_sync_queue(Name)) end]}
+      fun(Name) -> ?_test(test_sync_queue(Name)) end}
     }.
+
+async_queue_test_() ->
+    {"An async queue item waits for a free slot and then runs",
+     {setup,
+      fun start_failpool/0,
+      fun kill_ppool/1,
+      fun(Name) -> ?_test(test_async_queue(Name)) end}}.
 
 supervision_test_() ->
     {"The ppool will never restart a dead child, but all children (OTP "
@@ -92,11 +98,15 @@ kill_ppool(Name) ->
     ppool:stop_pool(Name).
     
 %%% Actual tests
+%%%
+%%% The workers are ppool_nagger processes: each sends {self(), Task}
+%%% to the test after Delay ms and then, with Max = 1, stops.  The
+%%% tests wait for those messages and for the workers' exits instead
+%%% of sleeping, so they do not depend on how fast the machine is.
 start_and_test_name(Name) ->
     ppool:start_pool(Name, 1, {ppool_nagger, start_link, []}),
     A = whereis(Name),
     ppool:stop_pool(Name),
-    timer:sleep(100),
     B = whereis(Name),
     ?assert(undefined =/= A),
     ?assertEqual(undefined, B).
@@ -122,70 +132,131 @@ pool_run_alloc(Name) ->
 
 pool_run_noalloc(Name) ->
     %% Init function should have set the limit to 2
-    ppool:run(Name, [i_am_running, 300, 1, self()]),
-    ppool:run(Name, [i_am_running, 300, 1, self()]),
+    ppool:run(Name, [i_am_running, 10000, 1, self()]),
+    ppool:run(Name, [i_am_running, 10000, 1, self()]),
     X = ppool:run(Name, [i_am_running, 1, 1, self()]),
     ?assertEqual(noalloc, X).
-    
+
 pool_run_realloc(Name) ->
     %% Init function should have set the limit to 2
-    {ok, A} = ppool:run(Name, [i_am_running, 500, 1, self()]),
-    timer:sleep(100),
-    {ok, B} = ppool:run(Name, [i_am_running, 500, 1, self()]),
-    timer:sleep(600),
+    {ok, A} = ppool:run(Name, [i_am_running, 20, 1, self()]),
+    {ok, B} = ppool:run(Name, [i_am_running, 20, 1, self()]),
+    ?assertEqual(noalloc, ppool:run(Name, [i_am_running, 1, 1, self()])),
+    %% both workers announce themselves and exit, freeing both slots
+    ok = await_msg(A, i_am_running),
+    ok = await_msg(B, i_am_running),
+    ok = await_exit(A),
+    ok = await_exit(B),
+    wait_free(Name, 2),
     {ok, Pid} = ppool:run(Name, [i_am_running, 1, 1, self()]),
-    timer:sleep(100),
-    L = flush(),
+    ok = await_msg(Pid, i_am_running),
     ?assert(is_pid(Pid)),
-    ?assertEqual([{A,i_am_running}, {B,i_am_running}, {Pid,i_am_running}],
-                 L).
+    ?assertEqual([], flush()).
 
 test_async_queue(Name) ->
-    %% Still two elements max!
-    ok = ppool:async_queue(Name, [i_am_running, 2000, 1, self()]),
-    ok = ppool:async_queue(Name, [i_am_running, 2000, 1, self()]),
-    noalloc = ppool:run(Name, [i_am_running, 2000, 1, self()]),
-    ok = ppool:async_queue(Name, [i_am_running, 500, 1, self()]),
-    timer:sleep(3500),
-    L = flush(),
-    ?assertMatch([{_, i_am_running}, {_, i_am_running},
-                  {_, i_am_running}], L).
+    %% Still two elements max!  The workers here are not naggers: they
+    %% run until told to stop, and tell us when they are started.
+    Me = self(),
+    ok = ppool:async_queue(Name, [{notify, Me}]),
+    ok = ppool:async_queue(Name, [{notify, Me}]),
+    W1 = await_up(),
+    _W2 = await_up(),
+    noalloc = ppool:run(Name, [ok]),
+    ok = ppool:async_queue(Name, [{notify, Me}]),
+    %% the third waits in the queue until a slot is freed
+    wait_queue_len(Name, 1),
+    ?assertEqual([], flush()),
+    W1 ! stop,
+    W3 = await_up(),
+    ?assert(is_pid(W3)),
+    wait_queue_len(Name, 0),
+    ?assertEqual([], flush()).
 
 test_sync_queue(Name) ->
     %% Hell yase, two max
-    {ok, Pid} = ppool:sync_queue(Name, [i_am_running, 200, 1, self()]),
-    ok = ppool:async_queue(Name, [i_am_running, 200, 1, self()]),
-    ok = ppool:async_queue(Name, [i_am_running, 200, 1, self()]),
-    {ok, Pid2} = ppool:sync_queue(Name, [i_am_running, 100, 1, self()]),
-    timer:sleep(300),
-    L = flush(),
+    Me = self(),
+    {ok, Pid} = ppool:sync_queue(Name, [i_am_running, 20, 1, Me]),
+    ok = ppool:async_queue(Name, [i_am_running, 20, 1, Me]),
+    ok = ppool:async_queue(Name, [i_am_running, 20, 1, Me]),
+    %% blocks until one of the others is done
+    {ok, Pid2} = ppool:sync_queue(Name, [i_am_running, 10, 1, Me]),
+    L = [await_any(i_am_running) || _ <- lists:seq(1, 4)],
     ?assert(is_pid(Pid)),
     ?assert(is_pid(Pid2)),
-    ?assertMatch([{_,i_am_running}, {_,i_am_running},
-                  {_,i_am_running}, {_,i_am_running}],
-                 L).
+    ?assertMatch([_, _, _, _], L),
+    ?assertEqual([], flush()).
 
 test_supervision(Name) ->
     ppool:start_pool(Name, 1, {ppool_nagger, start_link, []}),
     {ok, Pid} = ppool:run(Name, [sup, 10000, 100, self()]),
     ppool:stop_pool(Name),
-    timer:sleep(100),
+    %% stop_pool/1 returns once the pool's whole tree is down
     ?assertEqual(undefined, process_info(Pid)).
 
 test_auth_dealloc(Name) ->
     %% Hell yase, two max
-    {ok, _Pid} = ppool:sync_queue(Name, [i_am_running, 500, 1, self()]),
-    ok = ppool:async_queue(Name, [i_am_running, 10000, 1, self()]),
-    ok = ppool:async_queue(Name, [i_am_running, 10000, 1, self()]),
-    ok = ppool:async_queue(Name, [i_am_running, 1, 1, self()]),
-    timer:sleep(600),
+    Me = self(),
+    {ok, W} = ppool:sync_queue(Name, [i_am_running, 20, 1, Me]),
+    ok = ppool:async_queue(Name, [i_am_running, 10000, 1, Me]),
+    ok = ppool:async_queue(Name, [i_am_running, 10000, 1, Me]),
+    ok = ppool:async_queue(Name, [i_am_running, 1, 1, Me]),
+    wait_queue_len(Name, 2),
+    %% W is done: its real DOWN lets the first queued item start
+    ok = await_msg(W, i_am_running),
+    wait_queue_len(Name, 1),
+    %% DOWN messages from anybody else are ignored; the call is
+    %% handled after them, as they come from the same process
     Name ! {'DOWN', make_ref(), process, self(), normal},
     Name ! {'DOWN', make_ref(), process, self(), normal},
     Name ! {'DOWN', make_ref(), process, self(), normal},
-    timer:sleep(200),
-    L = flush(),
-    ?assertMatch([{_,i_am_running}], L).
+    ?assertEqual(1, queue_len(Name)),
+    ?assertEqual([], flush()).
 
+%%% Waiting helpers.
+
+%% The next {Pid, Msg} from a nagger (or timeout).
+await_msg(Pid, Msg) ->
+    receive {Pid, Msg} -> ok
+    after 3000 -> timeout
+    end.
+
+await_any(Msg) ->
+    receive {Pid, Msg} -> Pid
+    after 3000 -> timeout
+    end.
+
+%% The next worker started by start_worker({notify, To}).
+await_up() ->
+    receive {up, Pid} -> Pid
+    after 3000 -> timeout
+    end.
+
+%% Wait for a process to be gone.
+await_exit(Pid) ->
+    Ref = erlang:monitor(process, Pid),
+    receive {'DOWN', Ref, process, Pid, _} -> ok
+    after 3000 -> timeout
+    end.
+
+%% Wait until the pool server has N free slots (the first field of its
+%% state); a worker's exit reaches the server a moment after its
+%% other monitors.
+wait_free(Name, N) ->
+    wait_until(fun() ->
+                   {state, Free, _, _, _, _} = ppool:status(Name),
+                   Free =:= N
+               end).
+
+wait_until(Fun) ->
+    wait_until(Fun, 400).
+
+wait_until(Fun, 0) ->
+    ?assert(Fun());
+wait_until(Fun, Tries) ->
+    case Fun() of
+        true -> ok;
+        false -> timer:sleep(5), wait_until(Fun, Tries - 1)
+    end.
 
 flush() ->
     receive
