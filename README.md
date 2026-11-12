@@ -86,10 +86,10 @@ start_pool(Name, Limit, {M, F, A})
 
 Starts a pool. `Name` is an atom; it becomes the registered name of the
 pool server, so it must not be registered already by any process.
-`Limit` is an integer. `{M, F, A}` says how to start a worker: each
-worker is started with `apply(M, F, A ++ Args)`, where `Args` is the
-list given to `run/2` and friends. So `A` holds the arguments common to
-all workers and `Args` the per-call ones.
+`Limit` is an integer of at least 1. `{M, F, A}` says how to start a
+worker: each worker is started with `apply(M, F, A ++ Args)`, where
+`Args` is the list given to `run/2` and friends. So `A` holds the
+arguments common to all workers and `Args` the per-call ones.
 
 Returns `{ok, SupPid}` (the pid of the pool's supervisor) or
 `{error, Reason}`.
@@ -101,20 +101,19 @@ Returns `{ok, SupPid}` (the pid of the pool's supervisor) or
 
 Error cases:
 
+* Arguments are checked first, in this order, and nothing is started
+  or registered when one is rejected: `{error, {invalid_name, Name}}`
+  if `Name` is not an atom; `{error, {invalid_limit, Limit}}` if
+  `Limit` is not an integer or is less than 1 (zero and negative
+  limits are rejected); `{error, {invalid_mfa, MFA}}` if the third
+  argument is not `{Module, Function, Args}` with atoms `Module` and
+  `Function` and a list `Args`.
 * A name already registered by some other process (for example `ppool`
   or `init`) gives `{error, {{shutdown, {failed_to_start_child, serv,
   {already_started, Pid}}}, ChildSpec}}`. A name already used by a
   pool gives `{error, {already_started, SupPid}}`.
-* A `Name` that is not an atom, or a `Limit` that is not an integer
-  (for example `1.5` or `infinity`), gives an `{error, ...}` whose
-  reason contains a `function_clause` exit; a supervisor crash report
-  is also logged.
-* A third argument that is not a 3-tuple makes the call itself exit
-  with `function_clause`.
 * If the ppool application is not running, the call exits with
   `noproc`.
-* Zero and negative limits are accepted, but such a pool never runs
-  anything (see Caveats).
 
 stop_pool(Name)
 ---------------
@@ -329,15 +328,14 @@ Limits and caveats
 * A pool name equal to `ppool` or to any other registered process fails
   to start.
 * Queue is unbounded (above) and lives in one process.
-* A limit of zero (or less) is accepted but is useless: `run/2`
-  returns `noalloc`, and `async_queue/2` and `sync_queue/2` queue the
-  request forever, as slots never free up.
 * `Limit` is fixed when the pool is created; there is no way to change
   it.
 * There is no way to wait for a worker to finish, other than monitoring
   it yourself using the pid from `run/2` or `sync_queue/2`.
   `async_queue/2` gives you no pid at all.
-* The pool server logs unexpected plain messages with `io:format`.
+* The pool server logs unexpected plain messages with
+  `logger:warning/2` and drops them; a call it does not know is
+  answered with `{error, unknown_call}`.
 * `ppool_nagger` is test code; it is not part of the released package.
 * This is didactic code, and the original is kept as it was, with one
   deliberate behaviour change: a worker that fails to start is

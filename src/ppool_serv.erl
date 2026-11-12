@@ -115,7 +115,10 @@ status(Name) ->
 %% `{sync, Args}' (calls) and `{async, Args}' (cast).  The queue holds
 %% `{From, Args}' for sync requests and plain `Args' for async ones.
 %% The `limit' field counts free slots; `refs' holds the monitor
-%% references of running workers.
+%% references of running workers.  A call it does not know is answered
+%% at once with `{error, unknown_call}'; an unknown plain message is
+%% logged with logger:warning/2 and dropped; an unknown cast is dropped
+%% silently.
 %% Gen server
 -spec init(Args) -> Result
               when Args   :: {integer(), ppool:mfa_spec(), pid(),
@@ -209,7 +212,7 @@ handle_call(stop, _From, State) ->
 handle_call(status, _From, State) ->
 	{reply, State, State};
 handle_call(_Msg, _From, State) ->
-    {noreply, State}.
+    {reply, {error, unknown_call}, State}.
 
 
 -spec handle_cast(Request, State) -> Result
@@ -238,8 +241,8 @@ handle_info({start_worker_supervisor, Sup, MFA}, S = #state{}) ->
     {ok, Pid} = supervisor:start_child(Sup, ?SPEC(MFA)),
     link(Pid),
     {noreply, S#state{sup=Pid}};
-handle_info(Msg, State) ->
-    io:format("Unknown msg: ~p~n", [Msg]),
+handle_info(Msg, State = #state{name=Name}) ->
+    logger:warning("ppool_serv ~p: unexpected message ~p", [Name, Msg]),
     {noreply, State}.
 
 -spec code_change(OldVsn, State, Extra) -> Result
