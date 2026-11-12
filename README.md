@@ -333,7 +333,9 @@ Limits and caveats
 * There is no way to wait for a worker to finish, other than monitoring
   it yourself using the pid from `run/2` or `sync_queue/2`.
   `async_queue/2` gives you no pid at all.
-* The pool server logs unexpected plain messages with `io:format`.
+* The pool server logs unexpected plain messages with
+  `logger:warning/2` and drops them; a call it does not know is
+  answered with `{error, unknown_call}`.
 * `ppool_nagger` is test code; it is not part of the released package.
 * This is didactic code, and the original is kept as it was, with one
   deliberate behaviour change: a worker that fails to start is

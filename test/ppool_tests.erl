@@ -2,7 +2,7 @@
 
 -module(ppool_tests).
 -include_lib("eunit/include/eunit.hrl").
--export([start_worker/1, init_exit/0, start_any/3]).
+-export([start_worker/1, init_exit/0, start_any/3, log/2]).
 
 %%% All Test Fixtures
 start_test_() ->
@@ -750,3 +750,46 @@ valid_start_still_works(Name) ->
                  ppool:start_pool(Name, 1, {ppool_tests, start_worker,
                                             [ok]})),
     ppool:stop_pool(Name).
+
+%%% Unknown requests to the pool server.
+unknown_test_() ->
+    {"An unknown call is answered with an error at once; an unknown "
+     "plain message is logged as a warning and dropped; the pool "
+     "keeps working",
+     {foreach,
+      fun start_failpool/0,
+      fun kill_ppool/1,
+      [fun(Name) -> ?_test(unknown_call_replies(Name)) end,
+       fun(Name) -> ?_test(unknown_message_is_logged(Name)) end]}}.
+
+unknown_call_replies(Name) ->
+    {T, R} = timer:tc(fun() -> gen_server:call(Name, foo) end),
+    ?assertEqual({error, unknown_call}, R),
+    %% well inside the default 5000 ms timeout
+    ?assert(T < 1000000),
+    ?assertMatch({ok, _}, ppool:run(Name, [ok])).
+
+%% logger handler callback: forward warning events to a test process
+log(#{level := Level, msg := Msg, meta := Meta}, #{config := To}) ->
+    To ! {logged, Level, Msg, Meta},
+    ok.
+
+unknown_message_is_logged(Name) ->
+    Id = list_to_atom("ppool_tests_h_" ++
+                      integer_to_list(erlang:unique_integer([positive]))),
+    ok = logger:add_handler(Id, ?MODULE, #{config => self(),
+                                           level => all}),
+    try
+        Serv = whereis(Name),
+        Serv ! hello,
+        receive
+            {logged, warning, {Fmt, [Name, hello]}, _} ->
+                ?assert(is_list(Fmt))
+        after 3000 ->
+            ?assert(no_warning_logged)
+        end
+    after
+        logger:remove_handler(Id)
+    end,
+    ?assertMatch({ok, _}, ppool:run(Name, [ok])),
+    ?assert(is_process_alive(whereis(Name))).
