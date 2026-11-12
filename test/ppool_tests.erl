@@ -319,10 +319,14 @@ failed_start_test_() ->
        fun(Name) -> ?_test(three_tuple_start_is_a_worker(Name)) end]}}.
 
 start_failpool() ->
+    start_ctlpool(2).
+
+%% A pool of start_worker/1 workers, which run until sent `stop'.
+start_ctlpool(Limit) ->
     application:start(ppool),
     Name = list_to_atom("failpool_" ++
                         integer_to_list(erlang:unique_integer([positive]))),
-    {ok, _} = ppool:start_pool(Name, 2, {ppool_tests, start_worker, []}),
+    {ok, _} = ppool:start_pool(Name, Limit, {ppool_tests, start_worker, []}),
     Name.
 
 failed_run_is_an_error(Name) ->
@@ -437,6 +441,10 @@ start_worker({notify, To}) ->
     {ok, Pid} = start_worker(ok),
     To ! {up, Pid},
     {ok, Pid};
+start_worker({started, To, Tag}) ->
+    {ok, Pid} = start_worker(ok),
+    To ! {started, Tag, Pid},
+    {ok, Pid};
 start_worker({error, Reason}) ->
     {error, Reason};
 start_worker(raise) ->
@@ -453,3 +461,181 @@ init_exit() ->
 
 worker_loop() ->
     receive stop -> ok end.
+
+%%% Slot accounting, duplicate names, stopping and crashing pools.
+%%%
+%%% These pin the behaviour as it is.  Each test has its own pool of
+%%% start_worker/1 workers (limit 2 unless it says otherwise).
+slot_test_() ->
+    {"A worker that dies abnormally frees its slot, and the next "
+     "queued item runs in it",
+     {foreach,
+      fun start_failpool/0,
+      fun kill_ppool/1,
+      [fun(Name) -> ?_test(abnormal_exit_frees_slot(Name)) end]}}.
+
+abnormal_exit_frees_slot(Name) ->
+    Me = self(),
+    {ok, W1} = ppool:run(Name, [ok]),
+    {ok, W2} = ppool:run(Name, [ok]),
+    ?assertEqual(noalloc, ppool:run(Name, [ok])),
+    ok = ppool:async_queue(Name, [{notify, Me}]),
+    wait_queue_len(Name, 1),
+    exit(W1, kill),
+    %% the queued item takes over the slot
+    W3 = await_up(),
+    ?assert(is_process_alive(W3)),
+    wait_queue_len(Name, 0),
+    ?assertEqual(noalloc, ppool:run(Name, [ok])),
+    %% with an empty queue the slots are simply given back
+    exit(W2, crash),
+    exit(W3, kill),
+    ok = await_exit(W2),
+    ok = await_exit(W3),
+    wait_free(Name, 2),
+    ?assertMatch({ok, _}, ppool:run(Name, [ok])),
+    ?assertMatch({ok, _}, ppool:run(Name, [ok])),
+    ?assertEqual(noalloc, ppool:run(Name, [ok])).
+
+duplicate_name_test_() ->
+    {"A second pool with the name of a live pool is refused and the "
+     "first pool is not affected",
+     {setup,
+      fun start_failpool/0,
+      fun kill_ppool/1,
+      fun(Name) -> ?_test(duplicate_pool_name(Name)) end}}.
+
+duplicate_pool_name(Name) ->
+    Serv = whereis(Name),
+    {ok, W} = ppool:run(Name, [ok]),
+    MFA = {ppool_tests, start_worker, []},
+    ?assertMatch({error, {already_started, _}},
+                 ppool:start_pool(Name, 5, MFA)),
+    ?assertEqual(Serv, whereis(Name)),
+    ?assert(is_process_alive(W)),
+    %% still the first pool: limit 2, one slot in use
+    ?assertMatch({state, 1, _, _, _, Name}, ppool:status(Name)),
+    ?assertMatch({ok, _}, ppool:run(Name, [ok])),
+    ?assertEqual(noalloc, ppool:run(Name, [ok])).
+
+stop_queued_test_() ->
+    {"Items still queued when the pool is stopped are dropped: an "
+     "async item never runs, a sync_queue caller exits",
+     {setup,
+      fun start_failpool/0,
+      %% the pool is stopped by the test
+      fun(_Name) -> ok end,
+      fun(Name) -> ?_test(stop_pool_with_queue(Name)) end}}.
+
+stop_pool_with_queue(Name) ->
+    Me = self(),
+    {ok, W1} = ppool:run(Name, [ok]),
+    {ok, W2} = ppool:run(Name, [ok]),
+    ok = ppool:async_queue(Name, [{notify, Me}]),
+    spawn(fun() ->
+              R = try ppool:sync_queue(Name, [{notify, Me}])
+                  catch exit:Reason -> {exit, Reason}
+                  end,
+              Me ! {sync_result, R}
+          end),
+    wait_queue_len(Name, 2),
+    ?assertEqual(ok, ppool:stop_pool(Name)),
+    ?assertEqual(undefined, whereis(Name)),
+    ?assertEqual(undefined, process_info(W1)),
+    ?assertEqual(undefined, process_info(W2)),
+    %% the sync caller is told by an exit, as for any dead pool
+    receive {sync_result, {exit, {shutdown, _}}} -> ok
+    after 3000 -> ?assert(sync_caller_not_answered)
+    end,
+    %% pinned: nothing tells the async item's sender; it never runs
+    receive {up, _} -> ?assert(queued_item_ran_after_stop)
+    after 100 -> ok
+    end,
+    ?assertEqual([], flush()).
+
+fifo_test_() ->
+    {"Queued sync and async items are started in the order they were "
+     "queued",
+     {setup,
+      fun() -> start_ctlpool(1) end,
+      fun kill_ppool/1,
+      fun(Name) -> ?_test(fifo_across_kinds(Name)) end}}.
+
+fifo_across_kinds(Name) ->
+    Me = self(),
+    {ok, First} = ppool:run(Name, [ok]),
+    Kinds = [sync, async, sync, async, async, sync],
+    lists:foldl(
+      fun(Kind, N) ->
+              item(Kind, Name, Me, N),
+              wait_queue_len(Name, N),
+              N + 1
+      end, 1, Kinds),
+    %% free the slot over and over; each queued item starts in turn
+    First ! stop,
+    Order = [begin
+                 {Tag, W} = await_started(),
+                 W ! stop,
+                 Tag
+             end || _ <- Kinds],
+    ?assertEqual(lists:seq(1, length(Kinds)), Order),
+    wait_queue_len(Name, 0),
+    %% the sync callers got their pids
+    SyncTags = [N || {N, sync} <- lists:zip(lists:seq(1, 6), Kinds)],
+    [receive {sync_result, N, {ok, P}} -> ?assert(is_pid(P))
+     after 3000 -> ?assert(sync_caller_not_answered)
+     end || N <- SyncTags].
+
+%% Queue an item for Name; Tag is reported as {started, Tag, Pid}.
+item(sync, Name, Me, Tag) ->
+    spawn(fun() ->
+              R = ppool:sync_queue(Name, [{started, Me, Tag}]),
+              Me ! {sync_result, Tag, R}
+          end);
+item(async, Name, Me, Tag) ->
+    ok = ppool:async_queue(Name, [{started, Me, Tag}]).
+
+await_started() ->
+    receive {started, Tag, Pid} -> {Tag, Pid}
+    after 3000 -> {timeout, self()}
+    end.
+
+crash_test_() ->
+    {"When the pool server is killed, the pool restarts with a fresh "
+     "server: the limit is restored, the queue is empty and the "
+     "running workers are dead",
+     {setup,
+      fun start_failpool/0,
+      fun kill_ppool/1,
+      fun(Name) -> ?_test(restart_after_server_crash(Name)) end}}.
+
+restart_after_server_crash(Name) ->
+    Me = self(),
+    Serv = whereis(Name),
+    {state, 2, Sup, _, _, _} = ppool:status(Name),
+    {ok, W1} = ppool:run(Name, [ok]),
+    {ok, W2} = ppool:run(Name, [ok]),
+    ok = ppool:async_queue(Name, [{notify, Me}]),
+    wait_queue_len(Name, 1),
+    exit(Serv, kill),
+    ok = await_exit(W1),
+    ok = await_exit(W2),
+    %% the supervisor starts a new server under the same name
+    wait_until(fun() ->
+                   case whereis(Name) of
+                       undefined -> false;
+                       Serv -> false;
+                       _New -> true
+                   end
+               end),
+    {state, 2, Sup2, Refs, Queue, Name} = ppool:status(Name),
+    ?assert(Sup2 =/= Sup),
+    ?assertEqual(0, gb_sets:size(Refs)),
+    ?assert(queue:is_empty(Queue)),
+    %% pinned: the queued async item is lost without notice
+    receive {up, _} -> ?assert(queued_item_ran_after_crash)
+    after 100 -> ok
+    end,
+    ?assertMatch({ok, _}, ppool:run(Name, [ok])),
+    ?assertMatch({ok, _}, ppool:run(Name, [ok])),
+    ?assertEqual(noalloc, ppool:run(Name, [ok])).
