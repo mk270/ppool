@@ -2,7 +2,6 @@
 
 -module(ppool_tests).
 -include_lib("eunit/include/eunit.hrl").
--export([test_mfa/1, wait_mfa/1]).
 -export([start_worker/1, init_exit/0]).
 
 %%% All Test Fixtures
@@ -11,7 +10,7 @@ start_test_() ->
      {setup,
       fun find_unique_name/0,
       fun(Name) ->
-        [start_and_test_name(Name)]
+        [?_test(start_and_test_name(Name))]
       end}}.
 
 mfa_test_() ->
@@ -22,7 +21,7 @@ mfa_test_() ->
       fun start_ppool/0,
       fun kill_ppool/1,
       fun(Name) ->
-        [pool_run_mfa(Name)]
+        [?_test(pool_run_mfa(Name))]
       end}
     }.
 
@@ -34,8 +33,8 @@ alloc_test_() ->
       fun start_ppool/0,
       fun kill_ppool/1,
       fun(Name) ->
-        [pool_run_alloc(Name),
-         pool_run_noalloc(Name)]
+        [?_test(pool_run_alloc(Name)),
+         ?_test(pool_run_noalloc(Name))]
       end}
     }.
 
@@ -46,7 +45,7 @@ realloc_test_() ->
       fun start_ppool/0,
       fun kill_ppool/1,
       fun(Name) ->
-        [pool_run_realloc(Name)]
+        [?_test(pool_run_realloc(Name))]
       end}
     }.
 
@@ -56,8 +55,8 @@ queue_test_() ->
      {foreach,
       fun start_ppool/0,
       fun kill_ppool/1,
-      [fun(Name) -> test_async_queue(Name) end,
-       fun(Name) -> test_sync_queue(Name) end]}
+      [fun(Name) -> ?_test(test_async_queue(Name)) end,
+       fun(Name) -> ?_test(test_sync_queue(Name)) end]}
     }.
 
 supervision_test_() ->
@@ -66,7 +65,7 @@ supervision_test_() ->
      "are trapping exits",
      {setup,
       fun find_unique_name/0,
-      fun test_supervision/1}}.
+      fun(Name) -> ?_test(test_supervision(Name)) end}}.
     
 auth_test_() ->
     {"The ppool should only dequeue tasks after receiving a down signal "
@@ -74,12 +73,13 @@ auth_test_() ->
      {setup,
       fun start_ppool/0,
       fun kill_ppool/1,
-      fun test_auth_dealloc/1}}.
+      fun(Name) -> ?_test(test_auth_dealloc(Name)) end}}.
 
 %%% Setups/teardowns
 find_unique_name() ->
     application:start(ppool),
-    Name = list_to_atom(lists:flatten(io_lib:format("~p",[now()]))),
+    Name = list_to_atom("pool_" ++
+                        integer_to_list(erlang:unique_integer([positive]))),
     ?assertEqual(undefined, whereis(Name)),
     Name.
 
@@ -98,8 +98,8 @@ start_and_test_name(Name) ->
     ppool:stop_pool(Name),
     timer:sleep(100),
     B = whereis(Name),
-    [?_assert(undefined =/= A),
-     ?_assertEqual(undefined, B)].
+    ?assert(undefined =/= A),
+    ?assertEqual(undefined, B).
 
 pool_run_mfa(Name) ->
     ppool:run(Name, [i_am_running, 1, 1, self()]),
@@ -108,7 +108,7 @@ pool_run_mfa(Name) ->
     after 3000 ->
         timeout
     end,
-    ?_assertEqual(ok, X).
+    ?assertEqual(ok, X).
 
 pool_run_alloc(Name) ->
     {ok, Pid} = ppool:run(Name, [i_am_running, 1, 1, self()]),
@@ -117,15 +117,15 @@ pool_run_alloc(Name) ->
     after 3000 ->
         timeout
     end,
-    [?_assert(is_pid(Pid)),
-     ?_assertEqual(ok, X)].
+    ?assert(is_pid(Pid)),
+    ?assertEqual(ok, X).
 
 pool_run_noalloc(Name) ->
     %% Init function should have set the limit to 2
     ppool:run(Name, [i_am_running, 300, 1, self()]),
     ppool:run(Name, [i_am_running, 300, 1, self()]),
     X = ppool:run(Name, [i_am_running, 1, 1, self()]),
-    ?_assertEqual(noalloc, X).
+    ?assertEqual(noalloc, X).
     
 pool_run_realloc(Name) ->
     %% Init function should have set the limit to 2
@@ -136,9 +136,9 @@ pool_run_realloc(Name) ->
     {ok, Pid} = ppool:run(Name, [i_am_running, 1, 1, self()]),
     timer:sleep(100),
     L = flush(),
-    [?_assert(is_pid(Pid)),
-     ?_assertEqual([{A,i_am_running}, {B,i_am_running}, {Pid,i_am_running}],
-                   L)].
+    ?assert(is_pid(Pid)),
+    ?assertEqual([{A,i_am_running}, {B,i_am_running}, {Pid,i_am_running}],
+                 L).
 
 test_async_queue(Name) ->
     %% Still two elements max!
@@ -148,7 +148,8 @@ test_async_queue(Name) ->
     ok = ppool:async_queue(Name, [i_am_running, 500, 1, self()]),
     timer:sleep(3500),
     L = flush(),
-    ?_assertMatch([{_, i_am_running}, {_, i_am_running}, {_, i_am_running}], L).
+    ?assertMatch([{_, i_am_running}, {_, i_am_running},
+                  {_, i_am_running}], L).
 
 test_sync_queue(Name) ->
     %% Hell yase, two max
@@ -158,18 +159,18 @@ test_sync_queue(Name) ->
     {ok, Pid2} = ppool:sync_queue(Name, [i_am_running, 100, 1, self()]),
     timer:sleep(300),
     L = flush(),
-    [?_assert(is_pid(Pid)),
-     ?_assert(is_pid(Pid2)),
-     ?_assertMatch([{_,i_am_running}, {_,i_am_running},
-                    {_,i_am_running}, {_,i_am_running}],
-                   L)].
+    ?assert(is_pid(Pid)),
+    ?assert(is_pid(Pid2)),
+    ?assertMatch([{_,i_am_running}, {_,i_am_running},
+                  {_,i_am_running}, {_,i_am_running}],
+                 L).
 
 test_supervision(Name) ->
     ppool:start_pool(Name, 1, {ppool_nagger, start_link, []}),
     {ok, Pid} = ppool:run(Name, [sup, 10000, 100, self()]),
     ppool:stop_pool(Name),
     timer:sleep(100),
-    ?_assertEqual(undefined, process_info(Pid)). 
+    ?assertEqual(undefined, process_info(Pid)).
 
 test_auth_dealloc(Name) ->
     %% Hell yase, two max
@@ -183,8 +184,7 @@ test_auth_dealloc(Name) ->
     Name ! {'DOWN', make_ref(), process, self(), normal},
     timer:sleep(200),
     L = flush(),
-    ?_assertMatch([{_,i_am_running}], L).
-    
+    ?assertMatch([{_,i_am_running}], L).
 
 
 flush() ->
@@ -193,14 +193,6 @@ flush() ->
     after 0 ->
         []
     end.
-
-%% Exported Helper functions
-test_mfa(Pid) ->
-    Pid ! i_am_running.
-
-wait_mfa(Pid) ->
-    Pid ! i_am_running,
-    timer:sleep(3000).
 
 %%% A pool that does not exist is an error for every call that goes
 %%% via the pool server: an exit with noproc (stop_pool/1 returns
