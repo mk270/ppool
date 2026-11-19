@@ -1,11 +1,12 @@
 % Copyright (c) 2009 Frederic Trottier-Hebert; see LICENSE.txt for terms
 
-%% @doc Internal: the pool server, a gen_server registered under the
-%% pool's name.  It tracks how many workers are running, monitors them,
-%% and holds the queue of waiting requests.  Applications should use
-%% the `ppool' module instead.
-%% @end
 -module(ppool_serv).
+-moduledoc """
+Internal: the pool server, a gen_server registered under the
+pool's name.  It tracks how many workers are running, monitors them,
+and holds the queue of waiting requests.  Applications should use
+the `ppool` module instead.
+""".
 -behaviour(gen_server).
 -export([start/4, start_link/4, run/2, sync_queue/2, async_queue/2, stop/1]).
 -export([status/1]).
@@ -36,7 +37,9 @@
 %% A waiting request: `{From, Args}' for a sync one, `Args' for an async one.
 -type queued() :: {gen_server:from(), list()} | list().
 
-%% @doc Starts an unlinked pool server (not used by the library itself).
+-doc """
+Starts an unlinked pool server (not used by the library itself).
+""".
 -spec start(Name, Limit, Sup, MFA) -> Result
               when Name   :: ppool:name(),
                    Limit  :: integer(),
@@ -46,9 +49,11 @@
 start(Name, Limit, Sup, MFA) when is_atom(Name), is_integer(Limit) ->
     gen_server:start({local, Name}, ?MODULE, {Limit, MFA, Sup, Name}, []).
 
-%% @doc Starts a pool server linked to the caller, registered as `Name'.
-%% `Sup' is the pool's supervisor, in which the worker supervisor is
-%% started.
+-doc """
+Starts a pool server linked to the caller, registered as `Name`.
+`Sup` is the pool's supervisor, in which the worker supervisor is
+started.
+""".
 -spec start_link(Name, Limit, Sup, MFA) -> Result
               when Name   :: ppool:name(),
                    Limit  :: integer(),
@@ -58,7 +63,9 @@ start(Name, Limit, Sup, MFA) when is_atom(Name), is_integer(Limit) ->
 start_link(Name, Limit, Sup, MFA) when is_atom(Name), is_integer(Limit) ->
     gen_server:start_link({local, Name}, ?MODULE, {Limit, MFA, Sup, Name}, []).
 
-%% @doc See `ppool:run/2'.
+-doc """
+See `ppool:run/2`.
+""".
 -spec run(Name, Args) -> Result
               when Name   :: ppool:name(),
                    Args   :: list(),
@@ -68,7 +75,9 @@ start_link(Name, Limit, Sup, MFA) when is_atom(Name), is_integer(Limit) ->
 run(Name, Args) ->
     gen_server:call(Name, {run, Args}).
 
-%% @doc See `ppool:sync_queue/2'.
+-doc """
+See `ppool:sync_queue/2`.
+""".
 -spec sync_queue(Name, Args) -> Result
               when Name   :: ppool:name(),
                    Args   :: list(),
@@ -76,14 +85,16 @@ run(Name, Args) ->
 sync_queue(Name, Args) ->
     gen_server:call(Name, {sync, Args}, infinity).
 
-%% @doc See `ppool:async_queue/2'.
-%% A cast to a name nobody has registered is silently dropped, so a
-%% mistyped pool name would look like success.  Rather than turn the
-%% cast into a call (which would make the caller wait for the pool),
-%% check that the name resolves first, and fail the way the calls
-%% in this module do when there is no pool: exit with `noproc'.  The
-%% check and the cast are not atomic; a pool that dies in between
-%% still loses the request, as it would anyway.
+-doc """
+See `ppool:async_queue/2`.
+A cast to a name nobody has registered is silently dropped, so a
+mistyped pool name would look like success.  Rather than turn the
+cast into a call (which would make the caller wait for the pool),
+check that the name resolves first, and fail the way the calls
+in this module do when there is no pool: exit with `noproc`.  The
+check and the cast are not atomic; a pool that dies in between
+still loses the request, as it would anyway.
+""".
 -spec async_queue(Name, Args) -> Result
               when Name   :: ppool:name(),
                    Args   :: list(),
@@ -96,15 +107,19 @@ async_queue(Name, Args) ->
             gen_server:cast(Name, {async, Args})
     end.
 
-%% @doc Stops the pool server normally.  Its supervisor is
-%% `permanent' for it, so the pool is restarted empty.
+-doc """
+Stops the pool server normally.  Its supervisor is
+`permanent` for it, so the pool is restarted empty.
+""".
 -spec stop(Name) -> Result
               when Name   :: ppool:name(),
                    Result :: ok.
 stop(Name) ->
     gen_server:call(Name, stop).
 
-%% @doc See `ppool:status/1'.
+-doc """
+See `ppool:status/1`.
+""".
 -spec status(Name) -> Result
               when Name   :: ppool:name(),
                    Result :: state().

@@ -1,14 +1,17 @@
 % Copyright (c) 2009 Frederic Trottier-Hebert; see LICENSE.txt for terms
 
-%% @doc Internal: supervisor of one pool.  Strategy `one_for_all'
-%% (intensity 1 in 3000 ms) with the pool server as a permanent child;
-%% the worker supervisor is added to it later, by the pool server.
-%% @end
 -module(ppool_sup).
+-moduledoc """
+Internal: supervisor of one pool.  Strategy `one_for_all`
+(intensity 1 in 3000 ms) with the pool server as a permanent child;
+the worker supervisor is added to it later, by the pool server.
+""".
 -export([start_link/3, init/1]).
 -behaviour(supervisor).
 
-%% @doc Starts the supervisor of the pool `Name'.
+-doc """
+Starts the supervisor of the pool `Name`.
+""".
 -spec start_link(Name, Limit, MFA) -> Result
               when Name   :: ppool:name(),
                    Limit  :: integer(),
